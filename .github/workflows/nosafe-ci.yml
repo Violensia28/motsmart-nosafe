@@ -57,18 +57,17 @@ jobs:
         run: pio run -e nosafe-full | tee ci_build/build_full.log
 
       - name: Collect firmware
+        shell: bash
         run: |
-          python - << 'PY'
-import os, glob, shutil, subprocess
-os.makedirs('ci_build', exist_ok=True)
-bins = glob.glob('.pio/build/*/*.bin')
-short = subprocess.check_output(['git','rev-parse','--short','HEAD'], text=True).strip()
-for b in bins:
-    env = b.split('/')[-2]
-    out = f'ci_build/firmware-{env}-{short}.bin'
-    shutil.copy2(b, out)
-print('Collected:', bins)
-PY
+          mkdir -p ci_build
+          short="$(git rev-parse --short HEAD)"
+          shopt -s nullglob
+          for b in .pio/build/*/*.bin; do
+            envname="$(basename "$(dirname "$b")")"
+            cp "$b" "ci_build/firmware-${envname}-${short}.bin"
+          done
+          echo "Collected bins:"
+          ls -l ci_build || true
 
       - name: Upload firmware artifacts
         uses: actions/upload-artifact@v4
