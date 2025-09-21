@@ -116,3 +116,24 @@ jobs:
         with:
           name: build-logs
           path: ci_build/*.log
+- name: Test Flash ZIP integrity
+        shell: bash
+        run: |
+          set -e
+          zf=$(ls ci_build/bundles/flash-bundle-manual-lite-*.zip)
+          unzip -t "$zf"
+          unzip -l "$zf"
+          sha256sum "$zf"
+          - name: Create tar.gz bundle (manual-lite)
+        shell: bash
+        run: |
+          set -e
+          short="$(git rev-parse --short HEAD)"
+          tar -C ci_build/bundles/manual-lite -czf "ci_build/bundles/flash-bundle-manual-lite-${short}.tar.gz" .
+          ls -l ci_build/bundles
+
+      - name: Upload Flash Bundle (tar.gz)
+        uses: actions/upload-artifact@v4
+        with:
+          name: flash-bundle-manual-lite-tgz
+          path: ci_build/bundles/flash-bundle-manual-lite-*.tar.gz
