@@ -1,0 +1,175 @@
+name: manual-lite-ci
+
+on:
+  push:
+    branches:
+      - manual-lite
+    paths-ignore:
+      - "**/*.md"
+      - "**/README*"
+      - "**/CHANGELOG*"
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      # 1) Checkout
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # 2) Set up Python
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      # 3) Cache pip
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements*.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      # 4) Install PlatformIO
+      - name: Install PlatformIO
+        run: |
+          python -m pip install --upgrade pip
+          pip install platformio
+
+      # 5) Cache PlatformIO packages
+      - name: Cache PlatformIO
+        uses: actions/cache@v4
+        with:
+          path: ~/.platformio
+          key: ${{ runner.os }}-pio-${{ hashFiles('**/platformio*.ini') }}
+          restore-keys: |
+            ${{ runner.os }}-pio-
+
+      # 6) Build env manual-lite
+      - name: Build MANUAL (manual-lite)
+        run: |
+          mkdir -p ci_build
+          pio run -e manual-lite | tee ci_build/build_manual.log
+
+      # 7) Diagnose build tree (opsional tapi membantu)
+      - name: Diagnose build tree
+        shell: bash
+        run: |
+          echo "=== LIST .pio/build ==="
+          if [ -d .pio/build ]; then
+            find .pio/build -maxdepth 2 -type f -printf "%p\n" | sort
+          else
+            echo "::warning::.pio/build not found"
+          fi
+          echo "=== LIST env dir ==="
+          ls -l .pio/build/manual-lite || true
+
+      # 8) Kumpulkan .bin (env manual-lite) -> artefak "firmware-binaries"
+      - name: Collect firmware .bin
+        shell: bash
+        run: |
+          set -e
+          short="$(git rev-parse --short HEAD)"
+          mkdir -p ci_build
+          app=".pio/build/manual-lite/firmware.bin"
+          if [ -f "$app" ]; then
+            cp "$app" "ci_build/firmware-manual-lite-${short}.bin"
+          else
+            echo "::error file=firmware.bin::Missing .pio/build/manual-lite/firmware.bin"
+            exit 1
+          fi
+          ls -l ci_build
+
+      - name: Upload firmware artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware-binaries
+          path: ci_build/firmware-manual-lite-*.bin
+
+      # 9) Bundle Flash ZIP (bootloader.bin, partitions.bin, boot_app0.bin, firmware.bin + README)
+      - name: Bundle Flash ZIP (manual-lite)
+        shell: bash
+        run: |
+          set -euo pipefail
+          short="$(git rev-parse --short HEAD)"
+          env="manual-lite"
+          bd=".pio/build/${env}"
+
+          # Validasi file sistem dari hasil build Arduino-ESP32
+          app="$bd/firmware.bin"
+          [[ -f "$app" ]] || { echo "::error::Missing firmware.bin in $bd"; exit 1; }
+
+          boot="$(ls "$bd"/bootloader*.bin 2>/dev/null | head -n1 || true)"
+          [[ -n "${boot:-}" && -f "$boot" ]] || { echo "::error::bootloader*.bin not found in $bd"; exit 1; }
+
+          part="$(ls "$bd"/*partitions*.bin 2>/dev/null | head -n1 || true)"
+          [[ -n "${part:-}" && -f "$part" ]] || { echo "::error::*partitions*.bin not found in $bd"; exit 1; }
+
+          app0="$(ls "$bd"/boot_app0*.bin 2>/dev/null | head -n1 || true)"
+          [[ -n "${app0:-}" && -f "$app0" ]] || { echo "::error::boot_app0*.bin not found in $bd"; exit 1; }
+
+          work="ci_build/bundles/manual-lite"
+          rm -rf "$work"; mkdir -p "$work"
+
+          cp "$boot" "$work/bootloader.bin"
+          cp "$part" "$work/partitions.bin"
+          cp "$app0" "$work/boot_app0.bin"
+          cp "$app"  "$work/firmware.bin"
+
+          cat > "$work/README.txt" <<'TXT'
+ESP32 Flash Bundle (manual-lite)
+================================
+Gunakan ESP32 Flash Tool (Android), gunakan offset berikut:
+
+  0x1000   bootloader.bin
+  0x8000   partitions.bin
+  0xe000   boot_app0.bin
+  0x10000  firmware.bin
+
+Tips:
+- Masuk mode bootloader: tahan BOOT saat mulai flash (atau sesuai panduan board).
+- Jika gagal di 921600 baud, coba 460800.
+- Setelah selesai, tekan EN/RST untuk reboot.
+TXT
+
+          (cd "$work" && zip -9 -r "../flash-bundle-manual-lite-${short}.zip" .)
+          ls -l ci_build/bundles
+
+      - name: Upload Flash Bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: flash-bundle-manual-lite
+          path: ci_build/bundles/flash-bundle-manual-lite-*.zip
+
+      # 10) Upload build logs (selalu)
+      - name: Upload build logs (always)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-logs
+          path: ci_build/*.log
+
+  release:
+    # Release hanya saat push tag (mis. v0.3-manual)
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download Flash Bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: flash-bundle-manual-lite
+          path: ci_build
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            ci_build/*.zip
+            ci_build/*.bin
