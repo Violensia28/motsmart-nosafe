@@ -1,15 +1,17 @@
-cat > .github/workflows/nosafe-ci.yml <<'YAML'
 name: nosafe-ci
 
 on:
   push:
-    branches: [ "main", "nosafe-dev" ]
+    branches:
+      - main
+      - nosafe-dev
     paths-ignore:
       - "**/*.md"
       - "**/README*"
       - "**/CHANGELOG*"
   pull_request:
-    branches: [ "main" ]
+    branches:
+      - main
   workflow_dispatch:
 
 jobs:
@@ -97,4 +99,3 @@ PY
         uses: softprops/action-gh-release@v2
         with:
           files: ci_build/*.bin
-YAML
