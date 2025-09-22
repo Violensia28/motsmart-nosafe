@@ -99,14 +99,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: build-logs
-          path: ci_build/*.log          name: flash-bundle-manual-lite
-          path: ci_build/flash-bundle-manual-lite-*.zip
-
-      - name: Upload build logs (always)
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: build-logs
-          path: |
-            ci_build/*.log
-            ci_build/bundle/*.txt
+          path: ci_build/*.log
