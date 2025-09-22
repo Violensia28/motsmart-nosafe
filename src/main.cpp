@@ -20,11 +20,14 @@
 #ifndef OLED_ADDR
 #define OLED_ADDR 0x3C
 #endif
+#ifndef PULSE_MS
+#define PULSE_MS 120
+#endif
+#ifndef DEBOUNCE_MS
+#define DEBOUNCE_MS 180
+#endif
 
 U8G2_SSD1306_128X64_NONAME_F_HW_I2C u8g2(U8G2_R0, U8X8_PIN_NONE, OLED_SCL, OLED_SDA);
-
-const uint16_t PULSE_MS    = 30;   // ketukan singkat 10–50 ms
-const uint16_t DEBOUNCE_MS = 180;  // debouncing tombol
 
 static void beep(uint16_t ms=60){
   pinMode(BUZZER_PIN, OUTPUT);
@@ -44,6 +47,7 @@ static void drawStatus(const char* top, const char* mid, const char* bot){
   u8g2.sendBuffer();
 }
 
+// Pulse trigger, safe for no-series-resistor scenario (short and returns Hi-Z)
 static void pulseTimerTrigger(){
   pinMode(TRIG_OUT_PIN, OUTPUT);
   digitalWrite(TRIG_OUT_PIN, HIGH);
@@ -53,16 +57,15 @@ static void pulseTimerTrigger(){
 }
 
 void setup(){
-  pinMode(SW_PIN, INPUT_PULLUP); // micro switch → GPIO27 & GND (aktif LOW)
+  pinMode(SW_PIN, INPUT_PULLUP); // micro switch → GPIO27 & G (aktif LOW)
   pinMode(TRIG_OUT_PIN, INPUT);  // default Hi-Z
   pinMode(BUZZER_PIN, OUTPUT);
   digitalWrite(BUZZER_PIN, LOW);
 
-  // OLED init
   u8g2.setI2CAddress(OLED_ADDR<<1);
   u8g2.begin();
   u8g2.setPowerSave(0);
-  drawStatus("TIMER MODE", "READY", "BTN->TRIG  ENC N/A");
+  drawStatus("TIMER MODE","READY","BTN->TRIG  ENC N/A");
 }
 
 void loop(){
@@ -71,10 +74,15 @@ void loop(){
 
   if (last && !now){ // ditekan
     beep(40);
-    drawStatus("TIMER MODE","TRIGGER","ON for t_on (module)");
+    drawStatus("TIMER MODE","TRIGGER","PULSE " STR(PULSE_MS) " ms");
     pulseTimerTrigger();
     delay(DEBOUNCE_MS);
     drawStatus("TIMER MODE","READY","BTN->TRIG  ENC N/A");
   }
   last = now;
 }
+
+#ifndef STR2
+#define STR2(x) #x
+#define STR(x) STR2(x)
+#endif
