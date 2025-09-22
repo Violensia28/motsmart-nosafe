@@ -8,6 +8,7 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -27,7 +28,7 @@ jobs:
           mkdir -p ci_build
           pio run -e manual-lite | tee ci_build/build_manual.log
 
-      - name: Upload firmware
+      - name: Upload firmware (.bin)
         uses: actions/upload-artifact@v4
         with:
           name: firmware-manual-lite
@@ -62,6 +63,7 @@ jobs:
           work="ci_build/bundle"
           rm -rf "$work"
           mkdir -p "$work"
+
           cp "$boot" "$work/bootloader.bin"
           cp "$part" "$work/partitions.bin"
           cp "$app0" "$work/boot_app0.bin"
@@ -70,35 +72,58 @@ jobs:
           printf '%s\n' \
             'ESP32 Flash Bundle (manual-lite)' \
             '================================' \
-            'Offsets:' '' \
+            'Offsets:' \
+            '' \
             '  0x1000   bootloader.bin' \
             '  0x8000   partitions.bin' \
             '  0xe000   boot_app0.bin' \
             '  0x10000  firmware.bin' \
-            '' 'Tips:' '- Jika gagal di 921600 bps, gunakan 460800.' '- Tekan EN/RST setelah selesai.' \
+            '' \
+            'Tips:' \
+            '- Jika gagal di 921600 bps, gunakan 460800.' \
+            '- Tekan EN/RST setelah selesai.' \
             > "$work/README.txt"
 
           (cd ci_build && zip -9 -r "flash-bundle-manual-lite-${short}.zip" bundle)
 
-      - name: Upload Flash Bundle
+      - name: Bundle TAR.GZ + checksum (optional)
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          short="$(git rev-parse --short HEAD)"
+          work="ci_build/bundle"
+
+          # Pastikan bundle ZIP step sudah menghasilkan folder 'bundle'
+          if [[ ! -d "$work" ]]; then
+            echo "::warning::Bundle folder not found, creating from files if exist"
+            mkdir -p "$work"
+          fi
+
+          tar -C "ci_build" -czf "ci_build/flash-bundle-manual-lite-${short}.tar.gz" bundle
+          sha256sum "ci_build/flash-bundle-manual-lite-${short}.tar.gz" | tee "ci_build/flash-bundle-manual-lite-${short}.tar.gz.sha256"
+          ls -l ci_build
+
+      - name: Upload Flash Bundle (.zip)
         uses: actions/upload-artifact@v4
         with:
           name: flash-bundle-manual-lite
           path: ci_build/flash-bundle-manual-lite-*.zip
+
+      - name: Upload Flash Bundle (.tar.gz + sha256)
+        uses: actions/upload-artifact@v4
+        with:
+          name: flash-bundle-manual-lite-tgz
+          path: |
+            ci_build/flash-bundle-manual-lite-*.tar.gz
+            ci_build/flash-bundle-manual-lite-*.tar.gz.sha256
 
       - name: Upload build logs (always)
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: build-logs
-          path: ci_build/*.log          tar -C ci_build/bundles/manual-lite -czf "ci_build/bundles/flash-bundle-manual-lite-${short}.tar.gz" .
-          sha256sum "ci_build/bundles/flash-bundle-manual-lite-${short}.tar.gz" \
-            | tee "ci_build/bundles/flash-bundle-manual-lite-${short}.tar.gz.sha256"
-          ls -l ci_build/bundles
-
-      - name: Upload Flash Bundle (tar.gz)
-        uses: actions/upload-artifact@v4
-        with:
+          path: ci_build/*.log        with:
           name: flash-bundle-manual-lite-tgz
           path: |
             ci_build/bundles/flash-bundle-manual-lite-*.tar.gz
