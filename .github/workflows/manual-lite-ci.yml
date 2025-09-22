@@ -63,7 +63,6 @@ jobs:
           work="ci_build/bundle"
           rm -rf "$work"
           mkdir -p "$work"
-
           cp "$boot" "$work/bootloader.bin"
           cp "$part" "$work/partitions.bin"
           cp "$app0" "$work/boot_app0.bin"
@@ -94,9 +93,8 @@ jobs:
           short="$(git rev-parse --short HEAD)"
           work="ci_build/bundle"
 
-          # Pastikan bundle ZIP step sudah menghasilkan folder 'bundle'
           if [[ ! -d "$work" ]]; then
-            echo "::warning::Bundle folder not found, creating from files if exist"
+            echo "::warning::Bundle folder not found, creating placeholder"
             mkdir -p "$work"
           fi
 
@@ -118,18 +116,6 @@ jobs:
             ci_build/flash-bundle-manual-lite-*.tar.gz
             ci_build/flash-bundle-manual-lite-*.tar.gz.sha256
 
-      - name: Upload build logs (always)
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: build-logs
-          path: ci_build/*.log        with:
-          name: flash-bundle-manual-lite-tgz
-          path: |
-            ci_build/bundles/flash-bundle-manual-lite-*.tar.gz
-            ci_build/bundles/flash-bundle-manual-lite-*.tar.gz.sha256
-
-      # 10) Upload log (selalu)
       - name: Upload build logs (always)
         if: always()
         uses: actions/upload-artifact@v4
