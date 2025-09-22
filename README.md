@@ -1,28 +1,22 @@
 
-# Timer Trigger Mode — Repo‑Ready
+# Timer Trigger Mode + OLED — Repo‑Ready
 
-## Cara pakai (3 langkah)
-1) Upload **isi folder ini** ke repo GitHub (branch `manual-lite`) → centang *Delete existing files* bila perlu.
-2) Actions berjalan otomatis → ambil artifacts:
-   - `firmware-manual-lite/firmware.bin` → flash @ `0x10000`
-   - `flash-bundle-manual-lite` (ZIP) → paket lengkap untuk ESP32 Flash Tool (Android)
-3) Sambungkan hardware sesuai **Wiring** di bawah.
+## Cara pakai
+1) Upload isi folder ini ke branch `manual-lite` (Delete existing files jika perlu) → commit.
+2) Actions akan build otomatis → ambil `.bin` & Flash ZIP dari artifacts.
 
-## Wiring (tanpa menyebut pin IC, pakai terminal modul)
+## OLED
+- Default: SSD1306 128x64 I2C, alamat **0x3C**, pin **SDA=21, SCL=22**.
+- Ubah alamat di `platformio.ini` via `-DOLED_ADDR=0x3D` jika modulmu pakai 0x3D.
+- Jika modulmu SH1106, ubah tipe konstruktor di `src/main.cpp` sesuai driver U8g2.
+
+## Wiring modul timer (pakai terminal IN1, G — V2, G)
 - **ESP32 TRIG_OUT (GPIO26)** → **PC817 sisi A (+)**
 - **ESP32 G** → **PC817 sisi A (−)**
 - **IN1 (modul timer)** → **PC817 sisi B (OUT)**
 - **G (modul timer)** → **PC817 sisi B (G)**
-- **V2 (modul timer)** → **+ supply modul (5V/12V sesuai modul)**
+- **V2 (modul timer)** → **+ supply modul** (5V/12V sesuai modul)
 - **G (modul timer)** → **0V modul**
 
-> Dengan ini, saat ESP32 memberi ketukan, **IN1** tertarik ke **G** sebentar (low‑level trigger). Pastikan modul di mode **Monostable** dan `t_on` disetel sesuai kebutuhan.
-
 ## Peringatan
-- **Jangan** gunakan relay kecil dari modul timer untuk **primer MOT** (arus inrush tinggi). Gunakan output relay modul untuk **mengendalikan SSR/contactor** yang sesuai rating.
-- Tanpa resistor seri di PC817: ketukan ESP32 **sangat singkat** (30 ms) dan pin dikembalikan **Hi‑Z** untuk menghindari arus berlebih.
-
-## Uji cepat
-1) Set modul timer: **Monostable**, trigger **low‑level**, durasi **t_on**.
-2) Tekan tombol (GPIO27 ke GND) → modul timer ON selama **t_on** → OFF sendiri.
-3) Uji beban ringan (lampu) sebelum ke aktuator daya sebenarnya.
+- Relai kecil pada modul timer **jangan** untuk primer MOT. Gunakan SSR/contactor ber‑rating inrush; modul timer hanya sebagai control.
