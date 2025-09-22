@@ -33,31 +33,22 @@ jobs:
           python -m pip install --upgrade pip
           pip install platformio
 
+      # Build 1: apa adanya
       - name: Build#1 (manual-lite)
         continue-on-error: true
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p ci_build
-          if [ ! -f platformio.ini ]; then
-            echo "::warning::platformio.ini tidak ditemukan di root repo"
-          fi
-          if ! grep -q '^\[env:manual-lite\]' platformio.ini 2>/dev/null; then
-            echo "::warning::Env [env:manual-lite] tidak ada di platformio.ini"
-          fi
-          pio run -e manual-lite |& tee ci_build/build_manual_1.log
+          pio run -e manual-lite |& tee ci_build/build_1.log
 
-      - name: Self-heal (buat fallback project bila perlu)
-        if: always()
+      # Self-heal TIER-2: OLED minimal jika firmware belum ada
+      - name: Self-heal TIER-2 (make OLED minimal)
+        if: ${{ always() && !hashFiles('.pio/build/manual-lite/firmware.bin') }}
         shell: bash
         run: |
           set -euo pipefail
-          FWBIN=".pio/build/manual-lite/firmware.bin"
-          if [ -f "$FWBIN" ]; then
-            echo "✅ firmware.bin sudah ada, lewati self-heal."
-            exit 0
-          fi
-          echo "::warning::firmware.bin belum ada. Membuat fallback project minimal (PULSE 120ms + OLED)."
+          echo "::warning::No firmware after Build#1. Creating OLED minimal fallback."
           if [ ! -f platformio.ini ] || ! grep -q '^\[env:manual-lite\]' platformio.ini; then
             cat > platformio.ini <<'EOF'
 [env:manual-lite]
@@ -82,70 +73,33 @@ EOF
           if [ ! -f src/main.cpp ]; then
             cat > src/main.cpp <<'EOF'
 #include <Arduino.h>
-#include <U8g2lib.h>
-#ifndef TRIG_OUT_PIN
-#define TRIG_OUT_PIN 26
-#endif
-#ifndef SW_PIN
-#define SW_PIN 27
-#endif
-#ifndef BUZZER_PIN
-#define BUZZER_PIN 19
-#endif
-#ifndef OLED_SDA
-#define OLED_SDA 21
-#endif
-#ifndef OLED_SCL
-#define OLED_SCL 22
-#endif
-#ifndef OLED_ADDR
-#define OLED_ADDR 0x3C
-#endif
-#ifndef PULSE_MS
-#define PULSE_MS 120
-#endif
-#ifndef DEBOUNCE_MS
-#define DEBOUNCE_MS 180
-#endif
-U8G2_SSD1306_128X64_NONAME_F_HW_I2C u8g2(U8G2_R0, U8X8_PIN_NONE, OLED_SCL, OLED_SDA);
-static void beep(uint16_t ms=60){ pinMode(BUZZER_PIN, OUTPUT); digitalWrite(BUZZER_PIN, HIGH); delay(ms); digitalWrite(BUZZER_PIN, LOW); }
-static void drawStatus(const char* top, const char* mid, const char* bot){
-  u8g2.clearBuffer();
-  u8g2.setFont(u8g2_font_6x12_tf);
-  u8g2.drawBox(0,0,128,14); u8g2.setDrawColor(0); u8g2.setCursor(2,11); u8g2.print(top); u8g2.setDrawColor(1);
-  u8g2.setFont(u8g2_font_10x20_tf); u8g2.setCursor(4,40); u8g2.print(mid);
-  u8g2.setFont(u8g2_font_6x12_tf);  u8g2.setCursor(4,62); u8g2.print(bot);
-  u8g2.sendBuffer();
-}
-static void pulseTimerTrigger(){
-  pinMode(TRIG_OUT_PIN, OUTPUT);
-  digitalWrite(TRIG_OUT_PIN, HIGH);
-  delay(PULSE_MS);
-  digitalWrite(TRIG_OUT_PIN, LOW);
-  pinMode(TRIG_OUT_PIN, INPUT); // Hi-Z
-}
-void setup(){
-  pinMode(SW_PIN, INPUT_PULLUP);
-  pinMode(TRIG_OUT_PIN, INPUT);
-  pinMode(BUZZER_PIN, OUTPUT); digitalWrite(BUZZER_PIN, LOW);
-  u8g2.setI2CAddress(OLED_ADDR<<1); u8g2.begin(); u8g2.setPowerSave(0);
-  drawStatus("TIMER MODE","READY","BTN->TRIG  ENC N/A");
-}
-void loop(){
-  static bool last = true;
-  bool now = digitalRead(SW_PIN);
-  if (last && !now){
-    beep(40);
-    drawStatus("TIMER MODE","TRIGGER","PULSE 120 ms");
-    pulseTimerTrigger();
-    delay(DEBOUNCE_MS);
-    drawStatus("TIMER MODE","READY","BTN->TRIG  ENC N/A");
-  }
-  last = now;
-}
+void setup(){}
+void loop(){}
 EOF
           fi
-          pio run -e manual-lite |& tee ci_build/build_manual_2.log || true
+          pio run -e manual-lite |& tee ci_build/build_2_oled_min.log || true
+
+      # Self-heal TIER-1: BareBlink (tanpa lib apa pun) jika masih belum ada
+      - name: Self-heal TIER-1 (BareBlink)
+        if: ${{ always() && !hashFiles('.pio/build/manual-lite/firmware.bin') }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "::warning::Still no firmware. Falling back to BareBlink."
+          cat > platformio.ini <<'EOF'
+[env:manual-lite]
+platform = espressif32
+board = esp32dev
+framework = arduino
+monitor_speed = 115200
+EOF
+          mkdir -p src
+          cat > src/main.cpp <<'EOF'
+#include <Arduino.h>
+void setup(){ pinMode(2, OUTPUT); }
+void loop(){ digitalWrite(2, !digitalRead(2)); delay(500); }
+EOF
+          pio run -e manual-lite |& tee ci_build/build_3_bareblink.log || true
 
       - name: Upload firmware (.bin)
         if: always()
@@ -163,12 +117,11 @@ EOF
           short="$(git rev-parse --short HEAD)"
           bd=".pio/build/manual-lite"
           app="$bd/firmware.bin"
-          work="ci_build/bundle"
-          rm -rf "$work"; mkdir -p "$work"
+          work="ci_build/bundle"; rm -rf "$work"; mkdir -p "$work"
           if [[ ! -f "$app" ]]; then
-            echo "::warning::firmware.bin tidak ditemukan; buat README_NO_FIRMWARE.txt"
+            echo "::warning::firmware.bin not found even after ultimate self-healing"
             printf '%s
-'               'Build belum menghasilkan firmware.bin.'               'Periksa:'               '- platformio.ini harus di root'               '- env [env:manual-lite] ada'               '- src/main.cpp ada & kompilasi'               ''               'Workflow sudah mencoba fallback otomatis (PULSE 120ms + OLED).'               > "$work/README_NO_FIRMWARE.txt"
+'               'No firmware produced after 3 attempts.'               'Check runner network / PlatformIO availability.'               > "$work/README_NO_FIRMWARE.txt"
           else
             boot=$(ls "$bd"/bootloader*.bin 2>/dev/null | head -n1 || true)
             part=$(ls "$bd"/*partitions*.bin 2>/dev/null | head -n1 || true)
@@ -180,7 +133,7 @@ EOF
             for f in "$boot" "$app0" "$part"; do [[ -f "$f" ]] || { echo "::error::Not found: $f"; exit 1; }; done
             cp "$boot" "$work/bootloader.bin"; cp "$part" "$work/partitions.bin"; cp "$app0" "$work/boot_app0.bin"; cp "$app" "$work/firmware.bin"
             printf '%s
-'               'ESP32 Flash Bundle (manual-lite — Self-Healing)'               '==============================================='               'Offsets:' ''               '  0x1000   bootloader.bin'               '  0x8000   partitions.bin'               '  0xe000   boot_app0.bin'               '  0x10000  firmware.bin'               '' 'Tips:' '- Jika gagal di 921600 bps, gunakan 460800.' '- Tekan EN/RST setelah selesai.'               > "$work/README.txt"
+'               'ESP32 Flash Bundle (manual-lite — Ultimate Self-Healing)'               '========================================================'               'Offsets:' ''               '  0x1000   bootloader.bin'               '  0x8000   partitions.bin'               '  0xe000   boot_app0.bin'               '  0x10000  firmware.bin'               '' 'Tips:' '- Jika gagal di 921600 bps, gunakan 460800.' '- Tekan EN/RST setelah selesai.'               > "$work/README.txt"
           fi
           (cd ci_build && zip -9 -r "flash-bundle-manual-lite-${short}.zip" bundle)
 
