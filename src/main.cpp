@@ -21,11 +21,10 @@
 #define OLED_ADDR 0x3C
 #endif
 
-// OLED SSD1306 128x64 I2C
 U8G2_SSD1306_128X64_NONAME_F_HW_I2C u8g2(U8G2_R0, U8X8_PIN_NONE, OLED_SCL, OLED_SDA);
 
-const uint16_t PULSE_MS    = 30;
-const uint16_t DEBOUNCE_MS = 180;
+const uint16_t PULSE_MS    = 30;   // ketukan singkat 10–50 ms
+const uint16_t DEBOUNCE_MS = 180;  // debouncing tombol
 
 static void beep(uint16_t ms=60){
   pinMode(BUZZER_PIN, OUTPUT);
@@ -50,12 +49,12 @@ static void pulseTimerTrigger(){
   digitalWrite(TRIG_OUT_PIN, HIGH);
   delay(PULSE_MS);
   digitalWrite(TRIG_OUT_PIN, LOW);
-  pinMode(TRIG_OUT_PIN, INPUT);
+  pinMode(TRIG_OUT_PIN, INPUT); // Hi-Z
 }
 
 void setup(){
-  pinMode(SW_PIN, INPUT_PULLUP);
-  pinMode(TRIG_OUT_PIN, INPUT);
+  pinMode(SW_PIN, INPUT_PULLUP); // micro switch → GPIO27 & GND (aktif LOW)
+  pinMode(TRIG_OUT_PIN, INPUT);  // default Hi-Z
   pinMode(BUZZER_PIN, OUTPUT);
   digitalWrite(BUZZER_PIN, LOW);
 
@@ -70,7 +69,7 @@ void loop(){
   static bool last = true;
   bool now = digitalRead(SW_PIN);
 
-  if (last && !now){
+  if (last && !now){ // ditekan
     beep(40);
     drawStatus("TIMER MODE","TRIGGER","ON for t_on (module)");
     pulseTimerTrigger();
