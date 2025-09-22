@@ -1,82 +1,28 @@
-name: manual-lite-ci
-
-on:
-  push:
-    branches: [ manual-lite ]
-  workflow_dispatch:
-
-jobs:
-  build:
-    runs-on: ubuntu-latest
-    steps:
-      # 1) Checkout
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      # 2) Python
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      # 3) Cache pip
-      - name: Cache pip
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements*.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-pip-
-
-      # 4) Install PlatformIO
-      - name: Install PlatformIO
-        run: |
-          python -m pip install --upgrade pip
-          pip install platformio
-
-      # 5) Cache PlatformIO
-      - name: Cache PlatformIO
-        uses: actions/cache@v4
-        with:
-          path: ~/.platformio
-          key: ${{ runner.os }}-pio-${{ hashFiles('**/platformio*.ini') }}
-          restore-keys: |
-            ${{ runner.os }}-pio-
-
-      # 6) Build manual-lite
-      - name: Build MANUAL (manual-lite)
-        run: |
-          mkdir -p ci_build
-          pio run -e manual-lite | tee ci_build/build_manual.log
-
-      # 7) Upload firmware .bin
-      - name: Upload firmware artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: firmware-manual-lite
-          path: .pio/build/manual-lite/firmware.bin
-
-      # 8) Bundle Flash ZIP (manual-lite) — aman tanpa heredoc + fallback file sistem
-      - name: Bundle Flash ZIP (manual-lite)
+- name: Bundle Flash ZIP (manual-lite)
         shell: bash
         run: |
           set -euo pipefail
           short="$(git rev-parse --short HEAD)"
           bd=".pio/build/manual-lite"
 
-          # Wajib punya app
-          app="$bd/firmware.bin"
+          # 1) Ambil dari salinan hasil step Collect (lebih stabil)
+          app="ci_build/firmware-manual-lite-${short}.bin"
           if [[ ! -f "$app" ]]; then
-            echo "::error::Missing firmware.bin in $bd"
+            # 2) Fallback ke lokasi build langsung
+            app="$bd/firmware.bin"
+          fi
+
+          if [[ ! -f "$app" ]]; then
+            echo "::error::Missing firmware.bin (checked ci_build and $bd)"
+            echo "Tips: pastikan src/main.cpp ada dan platformio.ini memuat [env:manual-lite]"
             exit 1
           fi
 
-          # Cari dulu di folder build
+          # Cari file sistem dari folder build; jika tak ada, fallback Arduino core
           boot=$(ls "$bd"/bootloader*.bin 2>/dev/null | head -n1 || true)
           part=$(ls "$bd"/*partitions*.bin 2>/dev/null | head -n1 || true)
           app0=$(ls "$bd"/boot_app0*.bin 2>/dev/null | head -n1 || true)
 
-          # Fallback: framework Arduino-ESP32 default (DIO 40MHz)
           AR_CORE="$HOME/.platformio/packages/framework-arduinoespressif32"
           [[ -n "${boot:-}" ]] || boot="$AR_CORE/tools/sdk/esp32/bin/bootloader_dio_40m.bin"
           [[ -n "${app0:-}" ]] || app0="$AR_CORE/tools/partitions/boot_app0.bin"
@@ -84,7 +30,7 @@ jobs:
 
           for f in "$boot" "$app0" "$part"; do
             if [[ ! -f "$f" ]]; then
-              echo "::error::File not found: $f"
+              echo "::error::Not found: $f"
               exit 1
             fi
           done
@@ -96,9 +42,24 @@ jobs:
           cp "$app0" "$work/boot_app0.bin"
           cp "$app"  "$work/firmware.bin"
 
-          # README (tanpa heredoc)
           printf '%s\n' \
             'ESP32 Flash Bundle (manual-lite)' \
+            '================================' \
+            'Gunakan ESP32 Flash Tool (Android) dengan offset:' \
+            '' \
+            '  0x1000   bootloader.bin' \
+            '  0x8000   partitions.bin' \
+            '  0xe000   boot_app0.bin' \
+            '  0x10000  firmware.bin' \
+            '' \
+            'Tips:' \
+            '- Mode bootloader: tahan BOOT saat mulai flash (atau sesuai board).' \
+            '- Jika gagal di 921600 baud, coba 460800.' \
+            '- Selesai flash → tekan EN/RST.' \
+            > "$work/README.txt"
+
+          (cd "$work" && zip -9 -r "../flash-bundle-manual-lite-${short}.zip" .)
+          ls -l ci_build/bundles            'ESP32 Flash Bundle (manual-lite)' \
             '================================' \
             'Gunakan ESP32 Flash Tool (Android) dengan offset:' \
             '' \
