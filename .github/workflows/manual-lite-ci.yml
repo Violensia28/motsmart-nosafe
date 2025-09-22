@@ -1,3 +1,4 @@
+
 name: manual-lite-ci
 
 on:
@@ -10,48 +11,54 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # --- Checkout repo ---
       - name: Checkout
         uses: actions/checkout@v4
 
-      # --- Debug awal: pastikan struktur repo benar ---
       - name: Show repo tree (debug)
+        shell: bash
         run: |
           pwd
           ls -la
           find . -maxdepth 2 -type f -name "platformio.ini" -print || true
           find . -maxdepth 3 -type f -path "./src/main.cpp" -print || true
 
-      # --- Python + PlatformIO ---
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
       - name: Install PlatformIO
+        shell: bash
         run: |
           python -m pip install --upgrade pip
           pip install platformio
 
-      # --- Build ke-1 (tidak mematahkan job) ---
       - name: Build#1 (manual-lite)
-        id: build1
         continue-on-error: true
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p ci_build
+          if [ ! -f platformio.ini ]; then
+            echo "::warning::platformio.ini tidak ditemukan di root repo"
+          fi
+          if ! grep -q '^\[env:manual-lite\]' platformio.ini 2>/dev/null; then
+            echo "::warning::Env [env:manual-lite] tidak ada di platformio.ini"
+          fi
           pio run -e manual-lite |& tee ci_build/build_manual_1.log
 
-      # --- Self-healing: jika firmware.bin belum ada, buat fallback project & build ulang ---
-      - name: Self-heal (bootstrap fallback project jika perlu)
-        if: ${{ always() && !hashFiles('.pio/build/manual-lite/firmware.bin') }}
+      - name: Self-heal (buat fallback project bila perlu)
+        if: always()
         shell: bash
         run: |
           set -euo pipefail
+          FWBIN=".pio/build/manual-lite/firmware.bin"
+          if [ -f "$FWBIN" ]; then
+            echo "✅ firmware.bin sudah ada, lewati self-heal."
+            exit 0
+          fi
           echo "::warning::firmware.bin belum ada. Membuat fallback project minimal (PULSE 120ms + OLED)."
-          # Buat platformio.ini jika tidak ada atau env manual-lite belum ada
-          if [ ! -f platformio.ini ] || ! grep -q "^$$env:manual-lite$$" platformio.ini; then
+          if [ ! -f platformio.ini ] || ! grep -q '^\[env:manual-lite\]' platformio.ini; then
             cat > platformio.ini <<'EOF'
 [env:manual-lite]
 platform = espressif32
@@ -71,8 +78,6 @@ build_flags =
   -DDEBOUNCE_MS=180
 EOF
           fi
-
-          # Buat src/main.cpp jika tidak ada
           mkdir -p src
           if [ ! -f src/main.cpp ]; then
             cat > src/main.cpp <<'EOF'
@@ -131,7 +136,7 @@ void loop(){
   bool now = digitalRead(SW_PIN);
   if (last && !now){
     beep(40);
-    drawStatus("TIMER MODE","TRIGGER","PULSE " "120" " ms");
+    drawStatus("TIMER MODE","TRIGGER","PULSE 120 ms");
     pulseTimerTrigger();
     delay(DEBOUNCE_MS);
     drawStatus("TIMER MODE","READY","BTN->TRIG  ENC N/A");
@@ -140,11 +145,8 @@ void loop(){
 }
 EOF
           fi
-
-          # Build ulang (dipaksa hijau)
           pio run -e manual-lite |& tee ci_build/build_manual_2.log || true
 
-      # --- Upload firmware (apapun hasilnya; ignore kalau tidak ada) ---
       - name: Upload firmware (.bin)
         if: always()
         uses: actions/upload-artifact@v4
@@ -153,7 +155,6 @@ EOF
           path: .pio/build/manual-lite/firmware.bin
           if-no-files-found: ignore
 
-      # --- Bundling Flash ZIP (pasti sukses; kalau tidak ada firmware, sertakan README_NO_FIRMWARE) ---
       - name: Bundle Flash ZIP (manual-lite)
         if: always()
         shell: bash
@@ -164,18 +165,10 @@ EOF
           app="$bd/firmware.bin"
           work="ci_build/bundle"
           rm -rf "$work"; mkdir -p "$work"
-
           if [[ ! -f "$app" ]]; then
-            echo "::warning::firmware.bin tetap tidak ditemukan sesudah self-heal."
-            printf '%s\n' \
-              'Build belum menghasilkan firmware.bin.' \
-              'Periksa struktur repo:' \
-              ' - platformio.ini HARUS di root repo' \
-              ' - env [env:manual-lite] ada' \
-              ' - src/main.cpp ada & kompilasi' \
-              '' \
-              'Workflow ini sudah mencoba fallback otomatis (PULSE 120ms + OLED).' \
-              > "$work/README_NO_FIRMWARE.txt"
+            echo "::warning::firmware.bin tidak ditemukan; buat README_NO_FIRMWARE.txt"
+            printf '%s
+'               'Build belum menghasilkan firmware.bin.'               'Periksa:'               '- platformio.ini harus di root'               '- env [env:manual-lite] ada'               '- src/main.cpp ada & kompilasi'               ''               'Workflow sudah mencoba fallback otomatis (PULSE 120ms + OLED).'               > "$work/README_NO_FIRMWARE.txt"
           else
             boot=$(ls "$bd"/bootloader*.bin 2>/dev/null | head -n1 || true)
             part=$(ls "$bd"/*partitions*.bin 2>/dev/null | head -n1 || true)
@@ -185,24 +178,12 @@ EOF
             [[ -n "${app0:-}" ]] || app0="$AR_CORE/tools/partitions/boot_app0.bin"
             [[ -n "${part:-}" ]] || part="$AR_CORE/tools/partitions/default.bin"
             for f in "$boot" "$app0" "$part"; do [[ -f "$f" ]] || { echo "::error::Not found: $f"; exit 1; }; done
-            cp "$boot" "$work/bootloader.bin"
-            cp "$part" "$work/partitions.bin"
-            cp "$app0" "$work/boot_app0.bin"
-            cp "$app"  "$work/firmware.bin"
-            printf '%s\n' \
-              'ESP32 Flash Bundle (manual-lite — Self-Healing)' \
-              '===============================================' \
-              'Offsets:' '' \
-              '  0x1000   bootloader.bin' \
-              '  0x8000   partitions.bin' \
-              '  0xe000   boot_app0.bin' \
-              '  0x10000  firmware.bin' \
-              '' 'Tips:' '- Jika gagal di 921600 bps, gunakan 460800.' '- Tekan EN/RST setelah selesai.' \
-              > "$work/README.txt"
+            cp "$boot" "$work/bootloader.bin"; cp "$part" "$work/partitions.bin"; cp "$app0" "$work/boot_app0.bin"; cp "$app" "$work/firmware.bin"
+            printf '%s
+'               'ESP32 Flash Bundle (manual-lite — Self-Healing)'               '==============================================='               'Offsets:' ''               '  0x1000   bootloader.bin'               '  0x8000   partitions.bin'               '  0xe000   boot_app0.bin'               '  0x10000  firmware.bin'               '' 'Tips:' '- Jika gagal di 921600 bps, gunakan 460800.' '- Tekan EN/RST setelah selesai.'               > "$work/README.txt"
           fi
           (cd ci_build && zip -9 -r "flash-bundle-manual-lite-${short}.zip" bundle)
 
-      # --- Upload artifacts (selalu ada ZIP & log) ---
       - name: Upload Flash Bundle (.zip)
         if: always()
         uses: actions/upload-artifact@v4
